@@ -1,0 +1,30 @@
+FROM php:8.3-fpm-alpine
+
+RUN apk update && \
+    apk upgrade && \
+    apk add --no-cache \
+    curl \
+    wget \
+    bind-tools \
+    iputils \
+    net-tools \
+    busybox-extras \
+    bash \
+    tzdata\
+    $PHPIZE_DEPS
+
+RUN docker-php-ext-install \
+    mysqli \
+    pdo \
+    pdo_mysql \
+    opcache
+# Install Redis PHP extension
+RUN pecl install redis && \
+    docker-php-ext-enable redis
+
+WORKDIR /var/www/html
+COPY index.php .
+
+EXPOSE 9000
+
+CMD ["php-fpm","-F"]
