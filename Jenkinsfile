@@ -22,6 +22,7 @@ stages {
 
             git(
                 branch: 'main',
+		 credentialsId: 'devops-12',
                 url: 'git@github.com:89hrawat/docker-file.git'
             )
         }
