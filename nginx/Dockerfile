@@ -1,6 +1,6 @@
 FROM nginx:1.29-alpine
 RUN apk update && \
-    apk upgrade && \
+    apk upgrade --no-cache && \
     apk add --no-cache \ 
     curl \ 
     wget \ 
