@@ -5,16 +5,16 @@ agent {
 }
 
 environment {
-    NEXUS_URL      = "nexus.example.com:13002"
-    NEXUS_API_BASE = "http://192.168.119.10:8081"
+
+    NEXUS_URL = "nexus.example.com:13002"
 
     REDIS_MASTER_IMAGE = "${NEXUS_URL}/custom/redis-master:${BUILD_NUMBER}"
     REDIS_SLAVE_IMAGE  = "${NEXUS_URL}/custom/redis-slave:${BUILD_NUMBER}"
     PHP_IMAGE          = "${NEXUS_URL}/custom/php-fpm:${BUILD_NUMBER}"
     NGINX_IMAGE        = "${NEXUS_URL}/custom/nginx:${BUILD_NUMBER}"
 
-    NEXUS_REPO  = "docker-host-repo"   // ✅ correct
-    KEEP_IMAGES = "3"
+    NEXUS_REPO        = "custom"   // Your Nexus repo name
+    KEEP_IMAGES       = "4"        // How many latest images to keep
 }
 
 stages {
@@ -31,25 +31,41 @@ stages {
 
     stage('Build Redis Master Image') {
         steps {
-            sh 'docker build -t ${REDIS_MASTER_IMAGE} ./redis_M'
+            sh '''
+            docker build \
+            -t ${REDIS_MASTER_IMAGE} \
+            ./redis_M
+            '''
         }
     }
 
     stage('Build Redis Slave Image') {
         steps {
-            sh 'docker build -t ${REDIS_SLAVE_IMAGE} ./redis-slave'
+            sh '''
+            docker build \
+            -t ${REDIS_SLAVE_IMAGE} \
+            ./redis-slave
+            '''
         }
     }
 
     stage('Build PHP-FPM Image') {
         steps {
-            sh 'docker build -t ${PHP_IMAGE} ./php-fpm'
+            sh '''
+            docker build \
+            -t ${PHP_IMAGE} \
+            ./php-fpm
+            '''
         }
     }
 
     stage('Build NGINX Image') {
         steps {
-            sh 'docker build -t ${NGINX_IMAGE} ./nginx'
+            sh '''
+            docker build \
+            -t ${NGINX_IMAGE} \
+            ./nginx
+            '''
         }
     }
 
@@ -86,7 +102,9 @@ stages {
             ]) {
                 sh '''
                 echo "$NEXUS_PASS" | docker login \
-                ${NEXUS_URL} -u "$NEXUS_USER" --password-stdin
+                ${NEXUS_URL} \
+                -u "$NEXUS_USER" \
+                --password-stdin
                 '''
             }
         }
@@ -107,10 +125,16 @@ stages {
         steps {
             sh '''
             docker network create app-net || true
-            docker rm -f nginx redis-master redis-slave php-fpm || true
+
+            docker rm -f nginx         || true
+            docker rm -f php-fpm       || true
+            docker rm -f redis-master  || true
+            docker rm -f redis-slave   || true
 
             docker run -d --name redis-master --network app-net ${REDIS_MASTER_IMAGE}
+
             sleep 10
+
             docker run -d --name redis-slave  --network app-net ${REDIS_SLAVE_IMAGE}
             docker run -d --name php-fpm      --network app-net ${PHP_IMAGE}
             docker run -d --name nginx        --network app-net -p 8088:80 ${NGINX_IMAGE}
@@ -119,15 +143,21 @@ stages {
     }
 
     stage('Wait For Startup') {
-        steps { sh 'sleep 20' }
+        steps {
+            sh 'sleep 20'
+        }
     }
 
     stage('Verify Redis Master') {
-        steps { sh 'docker exec redis-master redis-cli ping | grep PONG' }
+        steps {
+            sh 'docker exec redis-master redis-cli ping | grep PONG'
+        }
     }
 
     stage('Verify Redis Replica') {
-        steps { sh 'docker exec redis-slave redis-cli info replication | grep role:slave' }
+        steps {
+            sh 'docker exec redis-slave redis-cli info replication | grep role:slave'
+        }
     }
 
     stage('Verify PHP-FPM') {
@@ -140,24 +170,27 @@ stages {
     }
 
     stage('Verify NGINX Config') {
-        steps { sh 'docker exec nginx nginx -t' }
+        steps {
+            sh 'docker exec nginx nginx -t'
+        }
     }
 
     stage('Verify NGINX Service') {
-        steps { sh 'curl -f http://localhost:8088' }
+        steps {
+            sh 'curl -f http://localhost:8088'
+        }
     }
 
     stage('Container Status') {
-        steps { sh 'docker ps' }
+        steps {
+            sh 'docker ps'
+        }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  NEXUS CLEANUP
-    //  Repo : docker-host-repo
-    //  API  : http://192.168.119.10:8081
-    //  Names: custom/redis-master etc.
-    //  Keep : latest 3, delete rest
-    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────
+    // NEXUS CLEANUP — Delete old images, keep only latest 4 per image
+    // Uses Nexus REST API with component ID (no docker command needed)
+    // ─────────────────────────────────────────────────────────────────
     stage('Cleanup Old Nexus Images') {
         steps {
             withCredentials([
@@ -167,117 +200,89 @@ stages {
                     passwordVariable: 'NEXUS_PASS'
                 )
             ]) {
-                sh '''#!/bin/bash
+                sh '''
+#!/bin/bash
+set -e
 
-NEXUS_API="http://192.168.119.10:8081"
-REPO="docker-host-repo"
-KEEP=3
+NEXUS_BASE="https://nexus.example.com:13002"
+REPO="${NEXUS_REPO}"
+KEEP=${KEEP_IMAGES}
 
-# ✅ Exact names as stored in Nexus (confirmed from API response)
-IMAGES="custom/redis-master custom/redis-slave custom/php-fpm custom/nginx"
-
-# ── Parse component IDs from JSON response using python3 ──
-parse_ids() {
-    python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    items = data.get('items', [])
-    # Sort by version number descending (newest first)
-    items.sort(key=lambda x: int(x.get('version', 0)), reverse=True)
-    for item in items:
-        print(item['id'])
-except Exception as e:
-    sys.stderr.write('Parse error: ' + str(e) + '\\n')
-"
-}
-
-parse_token() {
-    python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(data.get('continuationToken') or '')
-except:
-    print('')
-"
-}
+# All 4 image names to clean up
+IMAGES="redis-master redis-slave php-fpm nginx"
 
 cleanup_image() {
-    IMAGE_NAME="$1"
+    IMAGE_NAME=$1
     echo ""
     echo "=========================================="
-    echo "  Cleaning: ${IMAGE_NAME}"
+    echo "  Cleaning up: ${REPO}/${IMAGE_NAME}"
     echo "=========================================="
 
-    ALL_IDS=""
     CONTINUATION_TOKEN=""
+    ALL_IDS=""
+    ALL_VERSIONS=""
 
-    # ── Fetch all pages ──
+    # ── Fetch ALL pages from Nexus (handles pagination) ──
     while true; do
 
         if [ -z "$CONTINUATION_TOKEN" ]; then
-            URL="${NEXUS_API}/service/rest/v1/search?repository=${REPO}&name=${IMAGE_NAME}"
+            URL="${NEXUS_BASE}/service/rest/v1/search?repository=${REPO}&name=${IMAGE_NAME}&sort=version&direction=desc"
         else
-            URL="${NEXUS_API}/service/rest/v1/search?repository=${REPO}&name=${IMAGE_NAME}&continuationToken=${CONTINUATION_TOKEN}"
+            URL="${NEXUS_BASE}/service/rest/v1/search?repository=${REPO}&name=${IMAGE_NAME}&sort=version&direction=desc&continuationToken=${CONTINUATION_TOKEN}"
         fi
 
-        RESPONSE=$(curl -s --fail \
-            -u "${NEXUS_USER}:${NEXUS_PASS}" \
-            -H "Accept: application/json" \
-            "${URL}" || true)
+        RESPONSE=$(curl -s -u "${NEXUS_USER}:${NEXUS_PASS}" "$URL")
 
-        if [ -z "$RESPONSE" ]; then
-            echo "  ❌ Empty response. Skipping ${IMAGE_NAME}."
-            return 1
-        fi
-
-        PAGE_IDS=$(echo "$RESPONSE" | parse_ids)
-
-        if [ -z "$PAGE_IDS" ]; then
-            echo "  ⚠  No components found for: ${IMAGE_NAME}"
-            return 0
-        fi
+        # Extract IDs and versions from this page
+        PAGE_IDS=$(echo "$RESPONSE"     | jq -r '.items[].id')
+        PAGE_VERSIONS=$(echo "$RESPONSE" | jq -r '.items[].version')
 
         ALL_IDS=$(printf "%s\n%s" "$ALL_IDS" "$PAGE_IDS")
+        ALL_VERSIONS=$(printf "%s\n%s" "$ALL_VERSIONS" "$PAGE_VERSIONS")
 
-        CONTINUATION_TOKEN=$(echo "$RESPONSE" | parse_token)
-        [ -z "$CONTINUATION_TOKEN" ] && break
+        # Check if more pages exist
+        CONTINUATION_TOKEN=$(echo "$RESPONSE" | jq -r '.continuationToken // empty')
+        if [ -z "$CONTINUATION_TOKEN" ]; then
+            break
+        fi
+
         echo "  → Fetching next page..."
     done
 
-    # Remove blank lines — already sorted newest first by python
-    ALL_IDS=$(echo "$ALL_IDS" | grep -v '^$')
-    TOTAL=$(echo "$ALL_IDS" | wc -l | tr -d ' ')
+    # Clean up blank lines
+    ALL_IDS=$(echo "$ALL_IDS"         | grep -v '^$')
+    ALL_VERSIONS=$(echo "$ALL_VERSIONS" | grep -v '^$')
 
-    echo "  📦 Found   : ${TOTAL} version(s)"
-    echo "  ✔  Keeping : latest ${KEEP}"
+    TOTAL=$(echo "$ALL_IDS" | wc -l)
+    echo "  Found ${TOTAL} version(s) in Nexus"
 
     if [ "$TOTAL" -le "$KEEP" ]; then
-        echo "  ✅ Only ${TOTAL} exist. Nothing to delete."
-        return 0
+        echo "  ✅ Only ${TOTAL} image(s). Nothing to delete."
+        return
     fi
 
     DELETE_COUNT=$((TOTAL - KEEP))
-    echo "  🗑  Deleting: ${DELETE_COUNT} old version(s)"
+    echo "  ✔ Keeping latest ${KEEP} versions"
+    echo "  🗑 Will delete ${DELETE_COUNT} old version(s)"
     echo ""
 
-    # ── Delete everything after first $KEEP lines ──
+    # ── Delete old images (skip first $KEEP lines) ──
     echo "$ALL_IDS" | tail -n +$((KEEP + 1)) | while read -r COMP_ID; do
 
-        echo "  🗑  Deleting component ID: ${COMP_ID}"
+        VERSION=$(echo "$ALL_VERSIONS" | sed -n "$((KEEP + 1))p")
+
+        echo "  🗑 Deleting component ID: ${COMP_ID}"
 
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -X DELETE \
             -u "${NEXUS_USER}:${NEXUS_PASS}" \
-            "${NEXUS_API}/service/rest/v1/components/${COMP_ID}")
+            "${NEXUS_BASE}/service/rest/v1/components/${COMP_ID}")
 
-        case "$HTTP_CODE" in
-            204) echo "  ✅ Deleted (HTTP 204)" ;;
-            404) echo "  ⚠  Already gone (HTTP 404)" ;;
-            403) echo "  ❌ Permission denied (HTTP 403) — check nx-component-delete role" ;;
-              *) echo "  ❌ Failed (HTTP ${HTTP_CODE})" ;;
-        esac
+        if [ "$HTTP_CODE" = "204" ]; then
+            echo "  ✅ Deleted successfully (HTTP 204)"
+        else
+            echo "  ❌ Failed to delete (HTTP ${HTTP_CODE})"
+        fi
     done
 }
 
@@ -288,7 +293,7 @@ done
 
 echo ""
 echo "=========================================="
-echo "  ✅ Nexus Cleanup Complete!"
+echo "  Nexus Cleanup Complete!"
 echo "=========================================="
                 '''
             }
@@ -297,14 +302,28 @@ echo "=========================================="
 }
 
 post {
+
     always {
-        archiveArtifacts(artifacts: '*.json', fingerprint: true)
+        archiveArtifacts(
+            artifacts: '*.json',
+            fingerprint: true
+        )
     }
+
     success {
-        echo "BUILD SUCCESSFUL — pushed to Nexus, deployed, old images cleaned (kept ${KEEP_IMAGES})"
+        echo "=================================="
+        echo "BUILD SUCCESSFUL"
+        echo "Images pushed to Nexus"
+        echo "Containers deployed successfully"
+        echo "Old Nexus images cleaned up"
+        echo "=================================="
     }
+
     failure {
-        echo "BUILD FAILED — check Trivy reports and logs"
+        echo "=================================="
+        echo "BUILD FAILED"
+        echo "Check Trivy Reports / Logs"
+        echo "=================================="
     }
 }
 
