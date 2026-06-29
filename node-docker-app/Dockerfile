@@ -12,7 +12,9 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ALL dependencies (including devDependencies for TypeScript build)
-RUN npm ci
+# Using npm install because no package-lock.json exists yet
+# Once you commit package-lock.json, switch back to: RUN npm ci
+RUN npm install
 
 # ═══════════════════════════════════════════════════════════════
 # STAGE 2 — builder
@@ -48,7 +50,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ONLY production dependencies (no devDependencies)
-RUN npm ci --only=production && npm cache clean --force
+# --omit=dev skips devDependencies (replaces deprecated --only=production)
+RUN npm install --omit=dev && npm cache clean --force
 
 # Copy compiled JS from the builder stage (NOT the source TS)
 COPY --from=builder /app/dist ./dist
@@ -65,6 +68,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://localhost:3000/health || exit 1
 
-# Start the compiled app
 # Start the compiled app
 CMD ["node", "dist/index.js"]

@@ -1,8 +1,8 @@
 # Dependencies — reinstalled inside Docker
 node_modules
 
-# TypeScript source (only compiled dist is copied to prod stage)
-src
+# Compiled output from local machine (Docker rebuilds this)
+dist
 
 # Build artifacts from local machine
 dist
