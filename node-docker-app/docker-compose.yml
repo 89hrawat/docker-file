@@ -1,0 +1,46 @@
+version: "3.9"
+
+# ── Development ──────────────────────────────────────────────────
+# Run: docker compose up
+services:
+  app:
+    build:
+      context: .               # Build from current directory
+      dockerfile: Dockerfile   # Use our multistage Dockerfile
+      target: production       # Use the final production stage
+    container_name: node-app
+    ports:
+      - "3000:3000"            # host:container
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - .env                   # Load secrets from .env file
+    restart: unless-stopped    # Auto-restart on crash
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ── With a database (uncomment to use) ───────────────────────────
+#  db:
+#    image: postgres:16-alpine
+#    container_name: postgres
+#    environment:
+#      POSTGRES_USER: user
+#      POSTGRES_PASSWORD: password
+#      POSTGRES_DB: mydb
+#    ports:
+#      - "5432:5432"
+#    volumes:
+#      - postgres_data:/var/lib/postgresql/data
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U user"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+
+# volumes:
+#   postgres_data:

@@ -1,0 +1,41 @@
+# Dependencies — reinstalled inside Docker
+node_modules
+
+# TypeScript source (only compiled dist is copied to prod stage)
+src
+
+# Build artifacts from local machine
+dist
+
+# Git history
+.git
+.gitignore
+
+# Environment files — use Docker secrets or env vars in prod
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE / OS files
+.DS_Store
+.vscode
+.idea
+Thumbs.db
+
+# Test files
+__tests__
+*.test.ts
+*.spec.ts
+coverage
+
+# Docker files themselves
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+README.md
+docs/
